@@ -1,11 +1,7 @@
 import streamlit as st
 from dotenv import load_dotenv
 import asyncio
-import json
 import os
-from typing import List, Dict
-
-import ollama
 
 import nest_asyncio
 nest_asyncio.apply()
@@ -28,27 +24,16 @@ st.set_page_config(
 ################
 
 from utility.util_es import get_es, search_to_context
+from utility.util_llm import get_llm_util
 import final_strat as strategy_module
 
 @st.cache_resource
 def get_es_client():
     print("Getting ES client ...")
     return get_es()
-es = get_es_client()
 
-def transform_query(prompt: str, user_query: str) -> str:
-    """Uses the LLM to transform the user's query based on a given prompt."""
-    print(f"\033[93mTransforming query with prompt: {prompt}\033[0m")
-    response = ollama.chat(
-        model='llama3.2',
-        messages=[
-            {'role': 'system', 'content': prompt},
-            {'role': 'user', 'content': user_query}
-        ]
-    )
-    transformed_content = response['message']['content']
-    print(f"\033[93mOriginal query: {user_query} -> Transformed query: {transformed_content}\033[0m")
-    return transformed_content
+es = get_es_client()
+llm_util = get_llm_util()
 
 ################
 ## RAG PIPELINE
@@ -63,14 +48,18 @@ async def rag_pipeline(user_prompt: str):
 
     # 2. Conditionally transform the user query
     query_transform_prompt = strategy_params.get("query_transform_prompt")
+    model_name = strategy_params.get("model_name", "llama3.2")
+
     if query_transform_prompt:
-        search_query = transform_query(query_transform_prompt, user_prompt)
+        # Use the utility function for query transformation
+        transformed_response = llm_util.transform_query_direct(query_transform_prompt, user_prompt, model_name)
+        search_query = transformed_response['answer']
     else:
         search_query = user_prompt
 
     # 3. Perform hybrid search in Elasticsearch
     index_name = strategy_params['index_name']
-    inner_hits_size = 3  # Define this or get from params if needed
+    inner_hits_size = 3
     body = strategy_module.build_query(search_query, inner_hits_size)
     
     # 4. Conditionally rerank the results
@@ -80,14 +69,12 @@ async def rag_pipeline(user_prompt: str):
     citation_limit = 9
     rag_context_field = strategy_params.get("rag_context", "lore")
 
-    # Execute search and get context
     retrieved_chunks = search_to_context(
         es, index_name, search_query, body, rag_context_field, 
         rerank_inner_hits, doc_limit, citation_limit
     )
     rag_context = "\n".join([f"[{i+1}] {text}" for i, text in enumerate(retrieved_chunks)])
 
-    # Log the raw RAG context for comparison
     print("\n\033[94m--- RAG Context from Elasticsearch ---\033[0m")
     print(rag_context)
     print("\033[94m--------------------------------------\033[0m\n")
@@ -102,25 +89,10 @@ async def rag_pipeline(user_prompt: str):
     Do not use any of your own knowledge.
     """
 
-    llm_messages = [
-        {'role': 'system', 'content': system_prompt},
-        {'role': 'user', 'content': f"""Here is the context from the documentation search:
+    # Use the utility function for the RAG call
+    rag_response = llm_util.rag_direct(system_prompt, retrieved_chunks, user_prompt, model_name)
+    final_answer = rag_response['answer']
 
-{rag_context}
-
-Please answer the following question based only on this context:
-
-{user_prompt}"""}
-    ]
-
-    response = ollama.chat(
-        model='llama3.2',
-        messages=llm_messages,
-    )
-    
-    final_answer = response['message']['content']
-
-    # Log the final answer for comparison
     print("\n\033[92m--- Final Answer Provided to User ---\033[0m")
     print(final_answer)
     print("\033[92m-------------------------------------\033[0m\n")
