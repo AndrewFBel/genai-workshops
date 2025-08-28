@@ -87,11 +87,11 @@ def test_ollama():
         return False
 
 def test_rag_pipeline():
-    """Test complete RAG pipeline"""
+    """Test complete RAG pipeline with URLs"""
     print("\n🔄 Testing RAG pipeline...")
     
     try:
-        from utility.util_es import get_es, search_to_context
+        from utility.util_es import get_es, search_to_context_with_urls
         from utility.util_llm import get_llm_util
         import final_strat as strategy_module
         
@@ -108,8 +108,8 @@ def test_rag_pipeline():
         # Build query
         body = strategy_module.build_query(test_query, 3)
         
-        # Search
-        retrieval_context = search_to_context(
+        # Search with URLs
+        retrieval_context, source_urls = search_to_context_with_urls(
             es, index_name, test_query, body, 
             params.get("rag_context", "content"), 
             params.get("rerank_inner_hits", False), 
@@ -118,7 +118,16 @@ def test_rag_pipeline():
         
         if retrieval_context:
             print(f"  ✅ Retrieved {len(retrieval_context)} context passages")
+            print(f"  ✅ Retrieved {len(source_urls)} source URLs")
             print(f"  ✅ First passage: {retrieval_context[0][:100]}...")
+            if source_urls and source_urls[0]:
+                print(f"  ✅ First URL: {source_urls[0][:50]}...")
+            
+            # Test query transformation
+            query_transform_prompt = params.get("query_transform_prompt")
+            if query_transform_prompt:
+                transform_response = llm_util.transform_query_direct(query_transform_prompt, test_query)
+                print(f"  ✅ Query transformation: '{test_query}' → '{transform_response['answer']}'")
             
             # Test RAG
             context = "\n".join([f"[{i+1}] {text}" for i, text in enumerate(retrieval_context[:3])])

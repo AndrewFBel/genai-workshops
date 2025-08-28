@@ -133,6 +133,74 @@ def search_results_only(es: Elasticsearch, index_name: str, body: dict,  doc_lim
     return results
 
 
+def search_to_context_with_urls(es: Elasticsearch, index_name: str, query_string: str, body: dict, rag_context: str, rerank_inner_hits: bool, doc_limit: int, citation_limit: int) -> tuple:
+    """
+    Executes a search query and returns both context and source URLs.
+    
+    Returns:
+        tuple: (context_list, urls_list) where both lists have the same length
+    """
+    body["size"] = doc_limit
+    results = search_results_only(es=es, index_name=index_name, body=body, doc_limit=doc_limit)
+
+    context = []
+    urls = []
+    
+    if rerank_inner_hits:
+        results_to_examine = results['hits']['hits'][:doc_limit]
+        for hit in results_to_examine:
+            inner_hits = hit.get('inner_hits', [])
+            if len(inner_hits) > 0:
+                for inner_hit in inner_hits.get(f"{index_name}.{rag_context}", {})["hits"]["hits"]:
+                    context_value = inner_hit["_source"].get("text", "")
+                    context.append(str(context_value))
+                    # Get URL from parent document
+                    parent_url = hit["_source"].get("page_url", "")
+                    urls.append(parent_url)
+
+        # Rerank and maintain URL correspondence
+        reranked_resp = es.inference.inference(
+            task_type="rerank",
+            inference_id="dbaas-elastic-rerank",
+            input=context,
+            query=query_string
+        )
+
+        # Create mapping of reranked results to original URLs
+        reranked_context = []
+        reranked_urls = []
+        for item in reranked_resp['rerank'][:citation_limit]:
+            text = item['text']
+            # Find the original index of this text to get corresponding URL
+            try:
+                original_index = context.index(text)
+                reranked_context.append(text)
+                reranked_urls.append(urls[original_index])
+            except ValueError:
+                # Fallback if text not found
+                reranked_context.append(text)
+                reranked_urls.append("")
+        
+        return reranked_context, reranked_urls
+    else:
+        for hit in results['hits']['hits'][:doc_limit]:
+            inner_hits = hit.get('inner_hits', [])
+            parent_url = hit["_source"].get("page_url", "")
+            
+            if len(inner_hits) > 0:
+                for inner_hit in inner_hits.get(f"{index_name}.{rag_context}", {})["hits"]["hits"]:
+                    context_value = inner_hit["_source"].get("text", "")
+                    context.append(str(context_value))
+                    urls.append(parent_url)
+            else:
+                # Fallback to main document content
+                context_value = hit["_source"].get(rag_context, "")
+                context.append(str(context_value))
+                urls.append(parent_url)
+
+        return context[:citation_limit], urls[:citation_limit]
+
+
 def search_to_context(es: Elasticsearch, index_name: str, query_string: str, body: dict, rag_context: str, rerank_inner_hits: bool, doc_limit: int, citation_limit: int) -> list:
     """
     Executes a search query on the specified Elasticsearch index and extracts a specific context field from the results.
@@ -169,7 +237,7 @@ def search_to_context(es: Elasticsearch, index_name: str, query_string: str, bod
 
         reranked_resp = es.inference.inference(
             task_type="rerank",
-            inference_id= "my-elastic-rerank",  #"cohere_rerank"
+            inference_id= "dbaas-elastic-rerank",  #"cohere_rerank"
             input=context,
             query=query_string
         )

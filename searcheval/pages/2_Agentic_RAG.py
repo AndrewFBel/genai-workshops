@@ -18,7 +18,7 @@ st.set_page_config(
 ## IMPORTS
 ################
 
-from utility.util_es import get_es, search_to_context
+from utility.util_es import get_es, search_to_context, search_to_context_with_urls
 from utility.util_llm import get_llm_util
 import final_strat as strategy_module
 
@@ -94,9 +94,10 @@ Context:
     ## determine if this strategy wants inner hits re-ranked
     rerank_inner_hits = strategy_module.get_parameters().get("rerank_inner_hits", False)
 
-    ## RAG: R retrieval
-    retrieval_context = search_to_context(es, index_name, transformed_query, body, rag_context, rerank_inner_hits, doc_limit, citation_limit)
+    ## RAG: R retrieval with URLs
+    retrieval_context, source_urls = search_to_context_with_urls(es, index_name, transformed_query, body, rag_context, rerank_inner_hits, doc_limit, citation_limit)
     top_context_citations = retrieval_context[:citation_limit]
+    top_source_urls = source_urls[:citation_limit]
 
     context = "\n".join([f"[{i+1}] {text}" for i, text in enumerate(top_context_citations)])
 
@@ -116,6 +117,7 @@ Context:
         "original_query": original_query,
         "transformed_query": transformed_query,
         "retrieval_context": top_context_citations,
+        "source_urls": top_source_urls,
         "tokens_used": tokens_used
     }
 
@@ -143,6 +145,7 @@ def process_user_query(user_query: str) -> Dict[str, Any]:
             "original_query": user_query,
             "transformed_query": user_query,
             "retrieval_context": [],
+            "source_urls": [],
             "tokens_used": 0
         }
 
@@ -180,6 +183,14 @@ if prompt := st.chat_input("Ask about database services..."):
             # Display the answer
             st.markdown(result["answer"])
             
+            # Show reference sources
+            if result.get('source_urls'):
+                st.markdown("### 📚 Sources")
+                unique_urls = list(dict.fromkeys(result['source_urls']))  # Remove duplicates while preserving order
+                for i, url in enumerate(unique_urls[:5], 1):  # Show max 5 unique sources
+                    if url:
+                        st.markdown(f"[{i}. View Source Document]({url})")
+            
             # Show additional information in an expander
             with st.expander("Query Details"):
                 st.write(f"**Original Query:** {result['original_query']}")
@@ -191,6 +202,10 @@ if prompt := st.chat_input("Ask about database services..."):
                     st.write("**Retrieved Context:**")
                     for i, context in enumerate(result['retrieval_context'][:3], 1):
                         st.write(f"[{i}] {context[:200]}...")
+                        if i <= len(result.get('source_urls', [])):
+                            source_url = result['source_urls'][i-1]
+                            if source_url:
+                                st.markdown(f"   🔗 [Source]({source_url})")
     
     # Add assistant response to chat history
     st.session_state.messages.append({"role": "assistant", "content": result["answer"]})

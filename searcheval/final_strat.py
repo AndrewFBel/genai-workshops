@@ -15,14 +15,29 @@ def get_parameters() -> dict:
         "index_name": "dbaas-confluence-semantic",
         "query_transform_prompt": """Instructions:
 
-You are an assistant that interprets questions about Database as a Service (DBaaS) for use in an information retrieval system.
+You are a query optimizer for Database as a Service (DBaaS) documentation search.
 
-- Most questions should be left unmodified
-- If the question has major sections that are unimportant to the question or if the question needs simplifying, rephrase the question to a single sentence
-- Focus on the core database service, configuration, or operational aspect being asked about
-- Remove conversational elements like "please", "can you help me", etc.
-- Keep technical terms and specific database service names intact
-- Do not use quotes in your response
+IMPORTANT: Only modify queries that are clearly problematic. Most queries should be returned UNCHANGED.
+
+Only transform a query if it has:
+- Excessive conversational language ("please help me understand", "I was wondering if you could tell me")
+- Multiple unrelated questions in one query
+- Very long, rambling sentences that obscure the main question
+
+For good, clear questions (even if short), return them exactly as provided.
+
+When transformation is needed:
+- Keep the core technical question intact
+- Preserve all technical terms, product names, and specific details
+- Remove only unnecessary conversational elements
+- Maintain the original question structure and intent
+
+Examples:
+- "What is Oracle DBaaS?" → "What is Oracle DBaaS?" (NO CHANGE)
+- "How do I configure backups?" → "How do I configure backups?" (NO CHANGE)  
+- "Please help me understand how I might be able to configure database backups in the system" → "How do I configure database backups?"
+
+Return only the optimized query, no quotes or explanations.
         """,
         "rag_context": "content_semantic",
         "rerank_inner_hits": True

@@ -55,17 +55,16 @@ def search_for_hits(es, original_query: str) -> str:
 def render_results(search_results): 
     for hit in search_results['hits']['hits']:
 
-        _id = hit.get("_id", "ID")
-        url = hit.get("_source", {}).get("url", f"https://starwars.fandom.com/wiki/{_id}")
-        title = hit.get("_source", {}).get("title", _id)
-        lore = hit.get("_source", {}).get("lore", "No lore text returned in search")
+        url = hit.get("_source", {}).get("page_url")
+        title = hit.get("_source", {}).get("title")
+        lore = hit.get("_source", {}).get("lore", "No content returned in search")
 
         with st.container():
             st.markdown(
                 f"""
                 <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin-bottom: 10px;">
-                    <a href="{url}" target="_blank"><h3>{title}</h3></a>
-                    <p>{lore[:100]}...</p>
+                    <a href="{url}" target="_blank"><h5>{title}</h5></a>
+                    <p>{lore[:200]}...</p>
                 </div>
                 """,
                 unsafe_allow_html=True
