@@ -187,7 +187,7 @@ def _build_rank_eval_request(golden_data, strategy_module):
 
         query_transform_prompt = strategy_module.get_parameters().get("query_transform_prompt", None)
         if query_transform_prompt:
-            response = _query_transform(item["query"], query_transform_prompt)
+            response = llm_util.transform_query_direct(query_transform_prompt, item["query"])
             query_string = response["answer"]
         else:
             query_string = item["query"]
@@ -231,12 +231,7 @@ def _build_rank_eval_request(golden_data, strategy_module):
 #################
 
 
-from rich.console import Console
-# Monkey patch to suppress console.print
-Console.print = lambda *args, **kwargs: None
-
-from utility.util_deep_eval import generateLLMTestCase, evaluateTestCases
-from deepeval.evaluate import TestResult
+from utility.util_simple_eval import generate_test_case, evaluate_test_cases
 from utility.util_llm import LLMUtil
 from utility.util_es import search_to_context, get_es
 
@@ -283,7 +278,7 @@ def run_deepeval(es, strategy_modules, golden_data : list, rag_system_prompt: st
                 ## pre-process the query string
                 query_transform_prompt = strategy_module.get_parameters().get("query_transform_prompt", None)
                 if query_transform_prompt:
-                    response = _query_transform(item["query"], query_transform_prompt)
+                    response = llm_util.transform_query_direct(query_transform_prompt, item["query"])
                     query_string = response["answer"]
                     total_tokens = response["total_tokens"]
                     tokens_used += total_tokens
@@ -309,7 +304,7 @@ def run_deepeval(es, strategy_modules, golden_data : list, rag_system_prompt: st
                 system_prompt = rag_system_prompt.format(context=context)
 
                 ## perform the RAG
-                rag_reponse = llm_util.rag_cache(system_prompt, top_context_citations, item["query"])
+                rag_reponse = llm_util.rag_direct(system_prompt, top_context_citations, item["query"], should_print=False)
                 actual_output = rag_reponse["answer"]
                 rag_tokens = rag_reponse["total_tokens"]
                 tokens_used += rag_tokens
@@ -329,12 +324,12 @@ def run_deepeval(es, strategy_modules, golden_data : list, rag_system_prompt: st
                 else:
                     deepEvalScores[qid]["strategies"][strategy_name] = stratResult
 
-                ## prep deel eval test case for later batch evaluation
-                testCase = generateLLMTestCase(qid, query, actual_output, top_context_citations, correct_answer)
+                ## prep simple eval test case for later batch evaluation
+                testCase = generate_test_case(qid, query, actual_output, top_context_citations, correct_answer)
                 testCases.append(testCase)
 
         ## Run evaluations for this strategy      
-        rag_evaluation = evaluateTestCases(testCases)
+        rag_evaluation = evaluate_test_cases(testCases)
 
         for test_result in  rag_evaluation.test_results:
             quid = test_result.name

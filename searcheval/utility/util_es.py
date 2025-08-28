@@ -3,42 +3,25 @@ from elasticsearch import BadRequestError
 import os
 import json
 
-## attempt to load environment variables
-## if they aren't there we'll assume we are in Instruqt and accessing kubernetes-vm
-es_host = os.getenv("ES_SERVER", None)
-es_api_key = os.getenv("ES_API_KEY", None)
+## Load environment variables for Elasticsearch connection
+es_host = os.getenv("ES_SERVER")
+es_api_key = os.getenv("ES_API_KEY")
 
 ## The singleton Elasticsearch client instance
+if not es_host or not es_api_key:
+    raise ValueError("ES_SERVER and ES_API_KEY environment variables must be set")
 
-if es_host and es_api_key:
-    print("Using ES with configured Host and API key ...")
-    es = Elasticsearch(
-        hosts=[f"{es_host}"],
-        # basic_auth=(es_username, es_password),
-        api_key=es_api_key,
-        serializer=OrjsonSerializer(),
-        http_compress=True,
-        max_retries=10,
-        connections_per_node=100,
-        request_timeout=120,
-        retry_on_timeout=True,
-    )
-else:
-    print("Connecting to ES inside local Kubernetes ...")
-    es_host=os.getenv("ELASTICSEARCH_URL", "http://kubernetes-vm:9200")
-    es_username=os.getenv("ELASTICSEARCH_USER", "elastic")
-    es_password=os.getenv("ELASTICSEARCH_PASSWORD", "changeme")
-    es = Elasticsearch(
-        hosts=[f"{es_host}"],
-        basic_auth=(es_username, es_password),
-        # api_key=es_api_key,
-        serializer=OrjsonSerializer(),
-        http_compress=True,
-        max_retries=10,
-        connections_per_node=100,
-        request_timeout=120,
-        retry_on_timeout=True,
-    )
+print(f"Connecting to Elasticsearch at {es_host} with API key...")
+es = Elasticsearch(
+    hosts=[f"{es_host}"],
+    api_key=es_api_key,
+    serializer=OrjsonSerializer(),
+    http_compress=True,
+    max_retries=10,
+    connections_per_node=100,
+    request_timeout=120,
+    retry_on_timeout=True,
+)
 
 
 def get_es() -> Elasticsearch:

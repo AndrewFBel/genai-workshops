@@ -1,5 +1,3 @@
-### YOUR FINAL SEARCH STRATEGY IMPLEMENTATION GOES HERE ###
-
 def get_parameters() -> dict:
     """
     Returns a dictionary of parameters for configuring the search strategy
@@ -14,29 +12,70 @@ def get_parameters() -> dict:
     """
     return {
         "is_disabled": False,
-        "index_name": "star_wars_raw"
+        "index_name": "dbaas-confluence-semantic",
+        "query_transform_prompt": """Instructions:
+
+You are an assistant that interprets questions about Database as a Service (DBaaS) for use in an information retrieval system.
+
+- Most questions should be left unmodified
+- If the question has major sections that are unimportant to the question or if the question needs simplifying, rephrase the question to a single sentence
+- Focus on the core database service, configuration, or operational aspect being asked about
+- Remove conversational elements like "please", "can you help me", etc.
+- Keep technical terms and specific database service names intact
+- Do not use quotes in your response
+        """,
+        "rag_context": "content_semantic",
+        "rerank_inner_hits": True
     }
 
-def build_query(query_string: str, inner_hits_size:int = None) -> dict:
-    """
-    Constructs a query DSL for use in Elasticsearch
-
-    Args:
-        query_string (str): The search query string. You are not required to use this
-        inner_hits_size (int, optional): The size of inner hits. You are not required to use this
-
-    Returns:
-        dict: A dictionary representing the search query.
-    """
-
+    
+def build_query(query_string: str, inner_hits_size:int = 3) -> dict:
     return {
-        "query": {
-            "multi_match": {
-                "query": query_string,
-                "fields": [
-                    "title", 
-                    "lore"
-                ]
+      "retriever": {
+        "rrf": {
+          "retrievers": [
+            {
+              "standard": {
+                "query": {
+                  "nested": {
+                    "path": "content_semantic.inference.chunks",
+                    "query": {
+                      "knn": {
+                        "field": "content_semantic.inference.chunks.embeddings",
+                        "query_vector_builder": {
+                          "text_embedding": {
+                            "model_id": ".multilingual-e5-small-elasticsearch",
+                            "model_text": query_string
+                          }
+                        }
+                      }
+                    },
+                    "inner_hits": {
+                      "size": inner_hits_size,
+                      "name": "dbaas-confluence-semantic.content_semantic",
+                      "_source": [
+                        "content_semantic.inference.chunks.text"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "standard": {
+                "query": {
+                  "multi_match": {
+                    "query": query_string,
+                    "fields": [
+                      "title",
+                      "content"
+                    ]
+                  }
+                }
+              }
             }
+          ]
         }
+      },
+      "_source": False
     }

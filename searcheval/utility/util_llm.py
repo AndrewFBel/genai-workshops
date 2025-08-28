@@ -1,106 +1,141 @@
 
-import openai
+import ollama
+import os
+import json
+import logging
+from datetime import datetime
+from typing import Dict, List, Any
 
-from utility.util_llm_rag_cache import LLMRagCache
-from utility.util_query_transform_cache import QueryTransformCache
-
-
-## only instantiate one of these.  use the get_llm_util() function to get the singleton.  It isn't thread safe.
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class LLMUtil:
     def __init__(self):
-        ## This code assumes that both OPENAI_API_KEY and optionally OPENAI_BASE_URL 
-        ## are already set in the python envionrment with os.environ or load_dotenv
-        self.cache_helper = LLMRagCache()
-        self.query_transform_cache = QueryTransformCache()
-
+        self.ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        self.model_name = os.getenv("OLLAMA_MODEL", "llama3.2")
+        self.client = ollama.Client(host=self.ollama_host)
+        
+        # Initialize logging
+        self.log_file = "rag_interactions.log"
+        self._setup_logging()
     
-    ### Functions to call if you are working with cached inferences
-
-    def rag_cache(self, 
-                  system_prompt: str, 
-                  retrieval_context: list, 
-                  query_string: str, 
-                  model_name: str = "gpt-4o") -> dict:
-        
-        return self.cache_helper.rag(system_prompt, retrieval_context, query_string, model_name, self)
-        
-
-
-    def transform_query_cache(self, 
-                              question: str, 
-                              prompt: str) -> dict:
-
-        return  self.query_transform_cache.transform_query(question, prompt, self)
-
-
-    def flush_cache(self):
-        self.cache_helper._persist_to_disk()
-        self.query_transform_cache._persist_to_disk()
-
-
-    ### Functions to call if you want to avoid the cache
-
-    def transform_query_direct(self, system_prompt: str, user_query: str, model_name: str = "gpt-4o") -> dict:
-
+    def _setup_logging(self):
+        """Setup logging for RAG interactions"""
+        log_handler = logging.FileHandler(self.log_file)
+        log_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        log_handler.setFormatter(formatter)
+        logger.addHandler(log_handler)
+    
+    def _log_interaction(self, interaction_type: str, data: Dict[str, Any]):
+        """Log RAG interactions"""
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "type": interaction_type,
+            "data": data
+        }
+        logger.info(json.dumps(log_entry))
+    
+    def transform_query_direct(self, system_prompt: str, user_query: str, model_name: str = None) -> dict:
+        """Transform user query using Ollama"""
+        if model_name is None:
+            model_name = self.model_name
+            
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": user_query}
+            {"role": "user", "content": user_query}
         ]
-
+        
+        # Log the query transformation request
+        self._log_interaction("query_transform_request", {
+            "original_query": user_query,
+            "system_prompt": system_prompt,
+            "model": model_name
+        })
+        
         try:
-            completion = openai.chat.completions.create(
+            response = self.client.chat(
                 model=model_name,
                 messages=messages,
-                temperature=0.0  # or any other temperature you prefer
+                options={
+                    "temperature": 0.0,
+                    "num_predict": 512
+                }
             )
-
-            # Extract the content of the first (and typically only) completion
-            transformed_query = completion.choices[0].message.content.strip()
-
-            # Print the total number of tokens used by the model
-            total_tokens = completion.usage.total_tokens
-            # print(f"Total tokens used: {total_tokens}")
-
-            return {"answer": transformed_query, "total_tokens": total_tokens}
+            
+            transformed_query = response['message']['content'].strip()
+            
+            # Log the transformation result
+            self._log_interaction("query_transform_response", {
+                "original_query": user_query,
+                "transformed_query": transformed_query,
+                "model": model_name
+            })
+            
+            return {"answer": transformed_query, "total_tokens": 0}  # Ollama doesn't provide token count
         
-        except Exception as e: 
-            print(f"General exception encountered: {e}")
-            # Decide how you want to handle the error; return original query or raise exception
+        except Exception as e:
+            logger.error(f"Query transformation error: {e}")
+            self._log_interaction("query_transform_error", {
+                "original_query": user_query,
+                "error": str(e)
+            })
             return {"answer": user_query, "total_tokens": 0}
-
-
-
-    def rag_direct(self, system_prompt: str, retrieval_context: list, query_string: str, model_name: str = "gpt-4o", should_print=True) -> dict:
+    
+    def rag_direct(self, system_prompt: str, retrieval_context: list, query_string: str, model_name: str = None, should_print=True) -> dict:
+        """Perform RAG using Ollama"""
+        if model_name is None:
+            model_name = self.model_name
+            
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": query_string}
+            {"role": "user", "content": query_string}
         ]
-
+        
+        # Log the RAG request
+        self._log_interaction("rag_request", {
+            "query": query_string,
+            "system_prompt": system_prompt,
+            "retrieval_context": retrieval_context,
+            "model": model_name
+        })
+        
         try:
-            completion = openai.chat.completions.create(
+            response = self.client.chat(
                 model=model_name,
                 messages=messages,
-                temperature=0.0  # or any other temperature you prefer
+                options={
+                    "temperature": 0.0,
+                    "num_predict": 1024
+                }
             )
-
-            # Extract the content of the first (and typically only) completion
-            rag_answer = completion.choices[0].message.content.strip()
-
-            total_tokens = completion.usage.total_tokens
-            # print(f"Total tokens used: {total_tokens}")
-
-            # print(f"RAG question: {query_string}")
+            
+            rag_answer = response['message']['content'].strip()
+            
             if should_print:
                 print(f"\tRAG answer: {rag_answer}")
-
-            return {"answer": rag_answer, "total_tokens": total_tokens}
+            
+            # Log the RAG response
+            self._log_interaction("rag_response", {
+                "query": query_string,
+                "answer": rag_answer,
+                "model": model_name
+            })
+            
+            return {"answer": rag_answer, "total_tokens": 0}  # Ollama doesn't provide token count
         
-        except Exception as e: 
-            print(f"General exception encountered: {e}")
-            # Decide how you want to handle the error; return original query or raise exception
+        except Exception as e:
+            logger.error(f"RAG error: {e}")
+            self._log_interaction("rag_error", {
+                "query": query_string,
+                "error": str(e)
+            })
             return {"answer": "Unable to return response due to an LLM error", "total_tokens": 0}
-
+    
+    def flush_cache(self):
+        """No-op since we're not using cache"""
+        pass
 
 singleton_llm_util = LLMUtil()
 
