@@ -205,29 +205,59 @@ if prompt := st.chat_input("Ask about database services..."):
             # Display the answer
             st.markdown(result["answer"])
             
-            # Show reference sources
+            # Show reference sources (main sources only, no duplicates)
             if result.get('source_urls'):
-                st.markdown("### 📚 Sources")
-                unique_urls = list(dict.fromkeys(result['source_urls']))  # Remove duplicates while preserving order
-                for i, url in enumerate(unique_urls[:5], 1):  # Show max 5 unique sources
-                    if url:
-                        st.markdown(f"[{i}. View Source Document]({url})")
+                unique_urls = []
+                seen_urls = set()
+                for url in result['source_urls']:
+                    if url and url not in seen_urls:
+                        unique_urls.append(url)
+                        seen_urls.add(url)
+                
+                if unique_urls:
+                    st.markdown("---")
+                    st.markdown("**📚 Sources:**")
+                    for i, url in enumerate(unique_urls[:3], 1):  # Show max 3 main sources
+                        # Extract domain for cleaner display
+                        try:
+                            from urllib.parse import urlparse
+                            domain = urlparse(url).netloc
+                            display_text = f"{i}. {domain}" if domain else f"{i}. View Document"
+                        except:
+                            display_text = f"{i}. View Source Document"
+                        st.markdown(f"[{display_text}]({url})")
             
             # Show additional information in an expander
-            with st.expander("Query Details"):
-                st.write(f"**Original Query:** {result['original_query']}")
-                if result['transformed_query'] != result['original_query']:
-                    st.write(f"**Transformed Query:** {result['transformed_query']}")
-                st.write(f"**Tokens Used:** {result['tokens_used']}")
+            with st.expander("🔍 Query Details & Context"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("**Query Information:**")
+                    st.write(f"• Original: {result['original_query']}")
+                    if result['transformed_query'] != result['original_query']:
+                        st.write(f"• Transformed: {result['transformed_query']}")
+                    st.write(f"• Tokens Used: {result['tokens_used']}")
+                
+                with col2:
+                    if result.get('source_urls'):
+                        unique_urls = list(dict.fromkeys([url for url in result['source_urls'] if url]))
+                        st.write("**All Source Documents:**")
+                        for i, url in enumerate(unique_urls, 1):
+                            st.markdown(f"[{i}. Document Link]({url})")
                 
                 if result['retrieval_context']:
-                    st.write("**Retrieved Context:**")
-                    for i, context in enumerate(result['retrieval_context'][:3], 1):
-                        st.write(f"[{i}] {context[:200]}...")
-                        if i <= len(result.get('source_urls', [])):
-                            source_url = result['source_urls'][i-1]
-                            if source_url:
-                                st.markdown(f"   🔗 [Source]({source_url})")
+                    st.write("---")
+                    st.write("**📄 Retrieved Context Passages:**")
+                    for i, context in enumerate(result['retrieval_context'][:5], 1):
+                        with st.container():
+                            st.write(f"**Passage {i}:**")
+                            st.write(f"{context[:300]}{'...' if len(context) > 300 else ''}")
+                            # Show source for this specific passage
+                            if i <= len(result.get('source_urls', [])):
+                                source_url = result['source_urls'][i-1]
+                                if source_url:
+                                    st.markdown(f"🔗 [View Source]({source_url})")
+                            st.write("")  # Add spacing
     
     # Add assistant response to chat history
     st.session_state.messages.append({"role": "assistant", "content": result["answer"]})

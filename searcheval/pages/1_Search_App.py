@@ -52,23 +52,62 @@ def search_for_hits(es, original_query: str) -> str:
     return search_results
 
 
-def render_results(search_results): 
-    for hit in search_results['hits']['hits']:
+def get_document_details(es, index_name, doc_id):
+    """Get document details by ID"""
+    try:
+        doc = es.get(index=index_name, id=doc_id)
+        source = doc.get("_source", {})
+        return {
+            "url": (source.get("page_url") or source.get("url") or source.get("source_url") or source.get("link") or ""),
+            "title": source.get("title", "Untitled Document"),
+            "lore": source.get("lore", source.get("content", source.get("text", "No content available")))
+        }
+    except Exception as e:
+        return {
+            "url": "",
+            "title": f"Document {doc_id}",
+            "lore": "Content not available"
+        }
 
-        url = hit.get("_source", {}).get("page_url")
-        title = hit.get("_source", {}).get("title")
-        lore = hit.get("_source", {}).get("lore", "No content returned in search")
+def render_results(search_results): 
+    index_name = strategy_module.get_parameters()['index_name']
+    
+    for hit in search_results['hits']['hits']:
+        # Try to get from _source first (if available)
+        if "_source" in hit:
+            source = hit["_source"]
+            url = (source.get("page_url") or source.get("url") or source.get("source_url") or source.get("link") or "")
+            title = source.get("title", "Untitled Document")
+            lore = source.get("lore", source.get("content", source.get("text", "No content available")))
+        else:
+            # Fallback: get document by ID
+            doc_id = hit.get("_id", "")
+            details = get_document_details(es, index_name, doc_id)
+            url = details["url"]
+            title = details["title"]
+            lore = details["lore"]
 
         with st.container():
-            st.markdown(
-                f"""
-                <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin-bottom: 10px;">
-                    <a href="{url}" target="_blank"><h5>{title}</h5></a>
-                    <p>{lore[:200]}...</p>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+            if url:
+                st.markdown(
+                    f"""
+                    <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin-bottom: 10px;">
+                        <a href="{url}" target="_blank"><h5>{title}</h5></a>
+                        <p>{lore[:200]}...</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    f"""
+                    <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin-bottom: 10px;">
+                        <h5>{title}</h5>
+                        <p>{lore[:200]}...</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
 
 st.title("Search App")
