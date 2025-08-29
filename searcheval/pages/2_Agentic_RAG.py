@@ -100,7 +100,6 @@ Context:
         
         # Ensure we have valid data
         if not retrieval_context:
-            print("WARNING: No retrieval context found")
             retrieval_context = ["No relevant documentation found for this query."]
             source_urls = [""]
         

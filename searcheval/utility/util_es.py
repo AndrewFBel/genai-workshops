@@ -145,7 +145,7 @@ def get_document_url(es: Elasticsearch, index_name: str, doc_id: str) -> str:
                 source.get("source_url") or 
                 source.get("link") or "")
     except Exception as e:
-        print(f"DEBUG: Could not get document {doc_id}: {e}")
+        # Silently handle document fetch errors
         return ""
 
 
@@ -163,7 +163,6 @@ def search_to_context_with_urls(es: Elasticsearch, index_name: str, query_string
     urls = []
     
     if not results.get('hits', {}).get('hits'):
-        print("DEBUG: No search results returned")
         return [], []
     
     if rerank_inner_hits:
@@ -209,7 +208,6 @@ def search_to_context_with_urls(es: Elasticsearch, index_name: str, query_string
                         urls.append(parent_url)
             else:
                 # No inner hits found, skip this document
-                print(f"DEBUG: No inner hits found for key patterns: {possible_keys}")
                 continue
 
         # Rerank and maintain URL correspondence
@@ -239,7 +237,7 @@ def search_to_context_with_urls(es: Elasticsearch, index_name: str, query_string
                 
                 return reranked_context, reranked_urls
             except Exception as e:
-                print(f"DEBUG: Reranking failed: {e}, falling back to original order")
+                print(f"Warning: Reranking failed ({e}), using original order")
                 return context[:citation_limit], urls[:citation_limit]
         else:
             return [], []
