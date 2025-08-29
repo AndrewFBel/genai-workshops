@@ -73,53 +73,76 @@ Context:
 {context}
 """
     
-    tokens_used = 0
-    transformed_query = original_query
+    try:
+        tokens_used = 0
+        transformed_query = original_query
 
-    ## pre-process the query string
-    query_transform_prompt = strategy_module.get_parameters().get("query_transform_prompt", None)
-    if query_transform_prompt:
-        response = llm_util.transform_query_direct(
-            system_prompt=query_transform_prompt, 
-            user_query=original_query)
-        transformed_query = response["answer"]
-        total_tokens = response["total_tokens"]
-        tokens_used += total_tokens
-        print(f"\033[93mTransformed query: {transformed_query}\033[0m")
+        ## pre-process the query string
+        query_transform_prompt = strategy_module.get_parameters().get("query_transform_prompt", None)
+        if query_transform_prompt:
+            response = llm_util.transform_query_direct(
+                system_prompt=query_transform_prompt, 
+                user_query=original_query)
+            transformed_query = response["answer"]
+            total_tokens = response["total_tokens"]
+            tokens_used += total_tokens
+            print(f"\033[93mTransformed query: {transformed_query}\033[0m")
 
-    ## Do the RAG
-    index_name = strategy_module.get_parameters()['index_name']
-    body = strategy_module.build_query(transformed_query, inner_hits_size)
-    rag_context = strategy_module.get_parameters().get("rag_context", "content")
-    ## determine if this strategy wants inner hits re-ranked
-    rerank_inner_hits = strategy_module.get_parameters().get("rerank_inner_hits", False)
+        ## Do the RAG
+        index_name = strategy_module.get_parameters()['index_name']
+        body = strategy_module.build_query(transformed_query, inner_hits_size)
+        rag_context = strategy_module.get_parameters().get("rag_context", "content")
+        ## determine if this strategy wants inner hits re-ranked
+        rerank_inner_hits = strategy_module.get_parameters().get("rerank_inner_hits", False)
 
-    ## RAG: R retrieval with URLs
-    retrieval_context, source_urls = search_to_context_with_urls(es, index_name, transformed_query, body, rag_context, rerank_inner_hits, doc_limit, citation_limit)
-    top_context_citations = retrieval_context[:citation_limit]
-    top_source_urls = source_urls[:citation_limit]
+        ## RAG: R retrieval with URLs
+        retrieval_context, source_urls = search_to_context_with_urls(es, index_name, transformed_query, body, rag_context, rerank_inner_hits, doc_limit, citation_limit)
+        
+        # Ensure we have valid data
+        if not retrieval_context:
+            print("WARNING: No retrieval context found")
+            retrieval_context = ["No relevant documentation found for this query."]
+            source_urls = [""]
+        
+        top_context_citations = retrieval_context[:citation_limit]
+        top_source_urls = source_urls[:citation_limit] if source_urls else [""] * len(top_context_citations)
 
-    context = "\n".join([f"[{i+1}] {text}" for i, text in enumerate(top_context_citations)])
+        context = "\n".join([f"[{i+1}] {text}" for i, text in enumerate(top_context_citations)])
 
-    system_prompt = rag_system_prompt.format(context=context)
+        system_prompt = rag_system_prompt.format(context=context)
 
-    rag_response = llm_util.rag_direct(system_prompt, top_context_citations, original_query, should_print=False)
-    actual_output = rag_response["answer"]
-    rag_tokens = rag_response["total_tokens"]
-    tokens_used += rag_tokens
+        rag_response = llm_util.rag_direct(system_prompt, top_context_citations, original_query, should_print=False)
+        actual_output = rag_response["answer"]
+        rag_tokens = rag_response["total_tokens"]
+        tokens_used += rag_tokens
 
-    print(f"\t\033[91mRAG answer: {actual_output}\033[0m")
-    print(f"\t\033[91mTotal tokens used: {tokens_used}\033[0m")
+        print(f"\t\033[91mRAG answer: {actual_output}\033[0m")
+        print(f"\t\033[91mTotal tokens used: {tokens_used}\033[0m")
 
-    # Return structured data for logging
-    return {
-        "answer": actual_output,
-        "original_query": original_query,
-        "transformed_query": transformed_query,
-        "retrieval_context": top_context_citations,
-        "source_urls": top_source_urls,
-        "tokens_used": tokens_used
-    }
+        # Return structured data for logging
+        return {
+            "answer": actual_output,
+            "original_query": original_query,
+            "transformed_query": transformed_query,
+            "retrieval_context": top_context_citations,
+            "source_urls": top_source_urls,
+            "tokens_used": tokens_used
+        }
+        
+    except Exception as e:
+        print(f"ERROR in search_for_knowledge: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        # Return error response
+        return {
+            "answer": f"I apologize, but I encountered an error while processing your question: {str(e)}",
+            "original_query": original_query,
+            "transformed_query": original_query,
+            "retrieval_context": [],
+            "source_urls": [],
+            "tokens_used": 0
+        }
 
 ################
 ## SIMPLE RAG FLOW

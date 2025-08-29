@@ -146,55 +146,127 @@ def search_to_context_with_urls(es: Elasticsearch, index_name: str, query_string
     context = []
     urls = []
     
+    # Debug: Print first hit structure to understand the data (only if no results)
+    if not results.get('hits', {}).get('hits'):
+        print("DEBUG: No search results returned")
+    elif len(results['hits']['hits']) == 0:
+        print("DEBUG: Empty search results")
+    # Uncomment below for debugging index structure issues:
+    # elif results.get('hits', {}).get('hits'):
+    #     first_hit = results['hits']['hits'][0]
+    #     print(f"DEBUG: First hit keys: {list(first_hit.keys())}")
+    #     if '_source' in first_hit:
+    #         print(f"DEBUG: _source keys: {list(first_hit['_source'].keys())}")
+    #     else:
+    #         print("DEBUG: No _source in hit")
+    
     if rerank_inner_hits:
         results_to_examine = results['hits']['hits'][:doc_limit]
         for hit in results_to_examine:
-            inner_hits = hit.get('inner_hits', [])
-            if len(inner_hits) > 0:
-                for inner_hit in inner_hits.get(f"{index_name}.{rag_context}", {})["hits"]["hits"]:
-                    context_value = inner_hit["_source"].get("text", "")
+            inner_hits = hit.get('inner_hits', {})
+            
+            # Try multiple possible inner hit structures
+            inner_hit_key = None
+            for possible_key in [f"{index_name}.{rag_context}", rag_context, "content", "content_semantic"]:
+                if possible_key in inner_hits:
+                    inner_hit_key = possible_key
+                    break
+            
+            if inner_hit_key and len(inner_hits.get(inner_hit_key, {}).get("hits", {}).get("hits", [])) > 0:
+                for inner_hit in inner_hits[inner_hit_key]["hits"]["hits"]:
+                    context_value = inner_hit.get("_source", {}).get("text", "")
+                    if not context_value:
+                        # Try other possible text fields
+                        context_value = (inner_hit.get("_source", {}).get("content", "") or
+                                       inner_hit.get("_source", {}).get("body", "") or
+                                       str(inner_hit.get("_source", {})))
                     context.append(str(context_value))
-                    # Get URL from parent document
-                    parent_url = hit["_source"].get("page_url", "")
+                    
+                    # Try multiple possible URL field names
+                    source = hit.get("_source", {})
+                    parent_url = (source.get("page_url") or 
+                                source.get("url") or 
+                                source.get("source_url") or 
+                                source.get("link") or "")
                     urls.append(parent_url)
+            else:
+                # Fallback: use main document content
+                source = hit.get("_source", {})
+                context_value = (source.get("content") or 
+                               source.get("text") or 
+                               source.get("body") or 
+                               str(source))
+                context.append(str(context_value))
+                
+                parent_url = (source.get("page_url") or 
+                            source.get("url") or 
+                            source.get("source_url") or 
+                            source.get("link") or "")
+                urls.append(parent_url)
 
         # Rerank and maintain URL correspondence
-        reranked_resp = es.inference.inference(
-            task_type="rerank",
-            inference_id="dbaas-elastic-rerank",
-            input=context,
-            query=query_string
-        )
+        try:
+            reranked_resp = es.inference.inference(
+                task_type="rerank",
+                inference_id="dbaas-elastic-rerank",
+                input=context,
+                query=query_string
+            )
 
-        # Create mapping of reranked results to original URLs
-        reranked_context = []
-        reranked_urls = []
-        for item in reranked_resp['rerank'][:citation_limit]:
-            text = item['text']
-            # Find the original index of this text to get corresponding URL
-            try:
-                original_index = context.index(text)
-                reranked_context.append(text)
-                reranked_urls.append(urls[original_index])
-            except ValueError:
-                # Fallback if text not found
-                reranked_context.append(text)
-                reranked_urls.append("")
-        
-        return reranked_context, reranked_urls
+            # Create mapping of reranked results to original URLs
+            reranked_context = []
+            reranked_urls = []
+            for item in reranked_resp['rerank'][:citation_limit]:
+                text = item['text']
+                # Find the original index of this text to get corresponding URL
+                try:
+                    original_index = context.index(text)
+                    reranked_context.append(text)
+                    reranked_urls.append(urls[original_index])
+                except ValueError:
+                    # Fallback if text not found
+                    reranked_context.append(text)
+                    reranked_urls.append("")
+            
+            return reranked_context, reranked_urls
+        except Exception as e:
+            print(f"DEBUG: Reranking failed: {e}, falling back to original order")
+            return context[:citation_limit], urls[:citation_limit]
     else:
         for hit in results['hits']['hits'][:doc_limit]:
-            inner_hits = hit.get('inner_hits', [])
-            parent_url = hit["_source"].get("page_url", "")
+            inner_hits = hit.get('inner_hits', {})
             
-            if len(inner_hits) > 0:
-                for inner_hit in inner_hits.get(f"{index_name}.{rag_context}", {})["hits"]["hits"]:
-                    context_value = inner_hit["_source"].get("text", "")
+            # Try multiple possible URL field names
+            source = hit.get("_source", {})
+            parent_url = (source.get("page_url") or 
+                        source.get("url") or 
+                        source.get("source_url") or 
+                        source.get("link") or "")
+            
+            # Try multiple possible inner hit structures
+            inner_hit_key = None
+            for possible_key in [f"{index_name}.{rag_context}", rag_context, "content", "content_semantic"]:
+                if possible_key in inner_hits:
+                    inner_hit_key = possible_key
+                    break
+            
+            if inner_hit_key and len(inner_hits.get(inner_hit_key, {}).get("hits", {}).get("hits", [])) > 0:
+                for inner_hit in inner_hits[inner_hit_key]["hits"]["hits"]:
+                    context_value = inner_hit.get("_source", {}).get("text", "")
+                    if not context_value:
+                        # Try other possible text fields
+                        context_value = (inner_hit.get("_source", {}).get("content", "") or
+                                       inner_hit.get("_source", {}).get("body", "") or
+                                       str(inner_hit.get("_source", {})))
                     context.append(str(context_value))
                     urls.append(parent_url)
             else:
                 # Fallback to main document content
-                context_value = hit["_source"].get(rag_context, "")
+                context_value = (source.get("content") or 
+                               source.get("text") or 
+                               source.get("body") or 
+                               source.get(rag_context, "") or
+                               str(source))
                 context.append(str(context_value))
                 urls.append(parent_url)
 
